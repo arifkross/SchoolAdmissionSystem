@@ -7,11 +7,61 @@ import {
   registerStudent,
   createHold,
   getMyHolds,
-  confirmHold,
   cancelHold,
   createClass,
   createShift,
+  payAdmissionFee
 } from "./api";
+
+const ADMISSION_FEE = 500;
+
+// Backend enum number অথবা text থেকে Status নির্ধারণ
+const getStatus = (value) => {
+  const statuses = {
+    0: "pending",
+    1: "confirmed",
+    2: "cancelled",
+    3: "expired"
+  };
+
+  const text = String(value ?? "unknown").toLowerCase();
+
+  if (statuses[text] !== undefined) return statuses[text];
+
+  return text;
+};
+
+// API response-এর camelCase / PascalCase support
+const normalizeHold = (hold) => ({
+  id: hold.id ?? hold.Id,
+  classShiftId: hold.classShiftId ?? hold.ClassShiftId,
+  studentId: hold.studentId ?? hold.StudentId,
+  status: getStatus(hold.status ?? hold.Status),
+  createdAt: hold.createdAt ?? hold.CreatedAt,
+  expiresAt: hold.expiresAt ?? hold.ExpiresAt,
+  confirmedAt: hold.confirmedAt ?? hold.ConfirmedAt,
+  paymentStatus: String(
+    hold.paymentStatus ?? hold.PaymentStatus ?? "Unpaid"
+  ),
+  paymentAmount: hold.paymentAmount ?? hold.PaymentAmount ?? 0,
+  paidAt: hold.paidAt ?? hold.PaidAt,
+  className: hold.className ?? hold.ClassName ?? "Unknown Class",
+  shiftName: hold.shiftName ?? hold.ShiftName ?? "Unknown Shift"
+});
+
+const normalizeClass = (item) => ({
+  id: item.id ?? item.Id,
+  name: item.name ?? item.Name,
+  shifts: (item.shifts ?? item.Shifts ?? []).map((shift) => ({
+    id: shift.id ?? shift.Id,
+    shiftName: shift.shiftName ?? shift.ShiftName,
+    totalSeats: Number(shift.totalSeats ?? shift.TotalSeats ?? 0),
+    heldSeats: Number(shift.heldSeats ?? shift.HeldSeats ?? 0),
+    confirmedSeats: Number(
+      shift.confirmedSeats ?? shift.ConfirmedSeats ?? 0
+    )
+  }))
+});
 
 function App() {
   const [studentId, setStudentId] = useState("");
@@ -32,7 +82,7 @@ function App() {
     fullName: "",
     dateOfBirth: "",
     guardianName: "",
-    guardianPhone: "",
+    guardianPhone: ""
   });
 
   const [newClassName, setNewClassName] = useState("");
@@ -41,48 +91,35 @@ function App() {
   const [totalSeats, setTotalSeats] = useState(30);
   const [adminMessage, setAdminMessage] = useState("");
 
-  // Normalize application data
-  const normalizeHold = (hold) => ({
-    id: hold.id ?? hold.Id,
-    classShiftId: hold.classShiftId ?? hold.ClassShiftId,
-    studentId: hold.studentId ?? hold.StudentId,
-    status: hold.status ?? hold.Status ?? "Unknown",
-    createdAt: hold.createdAt ?? hold.CreatedAt,
-    expiresAt: hold.expiresAt ?? hold.ExpiresAt,
-    confirmedAt: hold.confirmedAt ?? hold.ConfirmedAt,
-    className:
-      hold.className ?? hold.ClassName ?? "Unknown Class",
-    shiftName:
-      hold.shiftName ?? hold.ShiftName ?? "Unknown Shift",
-  });
+  const [paymentAmounts, setPaymentAmounts] = useState({});
+  const [payingHoldId, setPayingHoldId] = useState("");
 
   // Load classes
   const loadClasses = async () => {
     try {
       const data = await getClasses();
-      setClasses(Array.isArray(data) ? data : []);
+
+      const classList = Array.isArray(data)
+        ? data
+        : data?.$values ?? [];
+
+      setClasses(classList.map(normalizeClass));
     } catch (err) {
-      console.error("Class loading error:", err);
+      console.error(err);
       setError(err.message || "Class loading failed");
     }
   };
 
-  // Load applications
+  // Load student applications
   const loadMyHolds = async (id = studentId) => {
-    const studentNumber = String(id || "").trim();
+    const brn = String(id || "").trim();
 
-    if (!studentNumber) {
-      setError("Student ID পাওয়া যায়নি");
-      return;
-    }
+    if (!brn) return [];
 
     try {
       setLoadingApplications(true);
-      setError("");
 
-      const data = await getMyHolds(studentNumber);
-
-      console.log("Applications API Response:", data);
+      const data = await getMyHolds(brn);
 
       let applications = [];
 
@@ -94,23 +131,15 @@ function App() {
         applications = data.applications;
       } else if (Array.isArray(data?.$values)) {
         applications = data.$values;
-      } else if (data && (data.id || data.Id)) {
-        applications = [data];
       }
 
-      const normalizedApplications = applications.map(normalizeHold);
+      const normalized = applications.map(normalizeHold);
 
-      console.log("Normalized Applications:", normalizedApplications);
+      setHolds(normalized);
 
-      setHolds(normalizedApplications);
-
-      if (normalizedApplications.length === 0) {
-        setSuccess("No applications found.");
-      }
-
-      return normalizedApplications;
+      return normalized;
     } catch (err) {
-      console.error("Application loading error:", err);
+      console.error(err);
       setError(err.message || "Could not load applications");
       setHolds([]);
       return [];
@@ -119,12 +148,12 @@ function App() {
     }
   };
 
-  // Initial load
+  // Initial loading
   useEffect(() => {
     loadClasses();
   }, []);
 
-  // Update expiry timer
+  // Update countdown every second
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(Date.now());
@@ -132,6 +161,24 @@ function App() {
 
     return () => clearInterval(timer);
   }, []);
+
+  // Countdown calculation
+  const getRemainingTime = (expiresAt) => {
+    if (!expiresAt) return 0;
+
+    const remaining = new Date(expiresAt).getTime() - currentTime;
+
+    return Math.max(0, Math.ceil(remaining / 1000));
+  };
+
+  const formatCountdown = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+
+    return `${String(minutes).padStart(2, "0")}:${String(
+      remainingSeconds
+    ).padStart(2, "0")}`;
+  };
 
   // Check existing student
   const handleContinue = async () => {
@@ -152,6 +199,15 @@ function App() {
       );
 
       if (response.ok) {
+        const data = await response.json();
+
+        setStudent({
+          fullName: data.fullName ?? data.FullName ?? "",
+          dateOfBirth: (data.dateOfBirth ?? data.DateOfBirth ?? "").split("T")[0],
+          guardianName: data.guardianName ?? data.GuardianName ?? "",
+          guardianPhone: data.guardianPhone ?? data.GuardianPhone ?? ""
+        });
+
         setStudentId(brn);
         setRegistered(true);
         setShowForm(false);
@@ -177,10 +233,10 @@ function App() {
 
   // Student form change
   const handleChange = (e) => {
-    setStudent({
-      ...student,
-      [e.target.name]: e.target.value,
-    });
+    setStudent((previous) => ({
+      ...previous,
+      [e.target.name]: e.target.value
+    }));
   };
 
   // Register student
@@ -197,17 +253,19 @@ function App() {
 
     try {
       setError("");
+      setSuccess("");
 
       await registerStudent({
         birthRegistrationNumber: studentId.trim(),
         fullName: student.fullName.trim(),
         dateOfBirth: student.dateOfBirth,
         guardianName: student.guardianName.trim(),
-        guardianPhone: student.guardianPhone.trim(),
+        guardianPhone: student.guardianPhone.trim()
       });
 
       setRegistered(true);
       setShowForm(false);
+
       setSuccess("Student Registration Successful!");
 
       await loadMyHolds(studentId.trim());
@@ -254,15 +312,19 @@ function App() {
         return;
       }
 
-      if (Number(totalSeats) < 1) {
-        setError("Total seats কমপক্ষে 1 হতে হবে");
+      if (
+        !Number.isInteger(Number(totalSeats)) ||
+        Number(totalSeats) < 1 ||
+        Number(totalSeats) > 1000
+      ) {
+        setError("Total seats 1 থেকে 1000 এর মধ্যে হতে হবে");
         return;
       }
 
       await createShift(
         selectedClassId,
         newShiftName.trim(),
-        totalSeats
+        Number(totalSeats)
       );
 
       setAdminMessage("Shift created successfully!");
@@ -289,7 +351,7 @@ function App() {
       await createHold(classId, shiftId, studentId.trim());
 
       setSuccess(
-        "Seat temporarily reserved! Please confirm within 10 minutes."
+        "Seat temporarily reserved! Please pay within 10 minutes."
       );
 
       await loadMyHolds(studentId.trim());
@@ -302,45 +364,98 @@ function App() {
     }
   };
 
-  // Confirm admission
-  const handleConfirm = async (holdId) => {
+  // Payment
+  const handlePayment = async (holdId) => {
     try {
       setError("");
       setSuccess("");
 
-      const result = await confirmHold(holdId, studentId.trim());
+      const enteredAmount = paymentAmounts[holdId];
 
-      setSuccess(
-        result.message || "Admission confirmed successfully!"
-      );
+      if (String(enteredAmount ?? "").trim() === "") {
+        setError("Please enter payment amount");
+        return;
+      }
+
+      const amount = Number(enteredAmount);
+
+      if (amount !== ADMISSION_FEE) {
+        setError("Admission Fee অবশ্যই ৳500 হতে হবে");
+        return;
+      }
+
+      const hold = holds.find((item) => item.id === holdId);
+
+      if (
+        !hold ||
+        hold.status !== "pending" ||
+        getRemainingTime(hold.expiresAt) <= 0
+      ) {
+        setError("আপনার ১০ মিনিটের Hold সময় শেষ হয়েছে।");
+        await loadMyHolds(studentId);
+        return;
+      }
+
+      setPayingHoldId(holdId);
+
+      await payAdmissionFee(holdId, studentId.trim(), amount);
+
+      setSuccess("✓ ePayment Success");
+
+      setPaymentAmounts((previous) => ({
+        ...previous,
+        [holdId]: ""
+      }));
 
       await loadMyHolds(studentId.trim());
       await loadClasses();
     } catch (err) {
-      setError(err.message || "Confirmation failed");
+      setError(err.message || "Payment failed");
 
       await loadMyHolds(studentId.trim());
       await loadClasses();
+    } finally {
+      setPayingHoldId("");
     }
   };
 
   // Cancel hold
-  const handleCancel = async (holdId) => {
+  const handleCancel = async (hold) => {
     try {
       setError("");
       setSuccess("");
 
-      const result = await cancelHold(holdId, studentId.trim());
+      if (
+        hold.status !== "pending" ||
+        getRemainingTime(hold.expiresAt) <= 0
+      ) {
+        setError("এই Hold আর Cancel করা যাবে না।");
+        await loadMyHolds(studentId);
+        return;
+      }
 
-      setSuccess(
-        result.message || "Hold cancelled successfully!"
-      );
+      const result = await cancelHold(hold.id, studentId.trim());
+
+      setSuccess(result.message || "Hold cancelled successfully!");
 
       await loadMyHolds(studentId.trim());
       await loadClasses();
     } catch (err) {
       setError(err.message || "Cancellation failed");
+
+      await loadMyHolds(studentId.trim());
     }
+  };
+
+  // Format date
+  const formatDate = (date) => {
+    if (!date) return "N/A";
+
+    const parsedDate = new Date(date);
+
+    if (Number.isNaN(parsedDate.getTime())) return "N/A";
+
+    return parsedDate.toLocaleString();
   };
 
   return (
@@ -350,10 +465,26 @@ function App() {
         <p>Online School Admission Portal</p>
       </header>
 
+      <nav className="main-nav">
+        <a href="#admin">Admin Panel</a>
+        <a href="#student">Student Registration</a>
+        <a href="#classes">Available Classes</a>
+        <a href="#applications">My Applications</a>
+      </nav>
+
       <main>
         {/* Admin Panel */}
-        <section className="admin-section">
+        <section className="admin-section" id="admin">
           <h2>Admin Panel</h2>
+
+          <div className="fee-admin-card">
+            <h3>Admission Fee</h3>
+            <p>
+              Fixed Admission Fee: <strong>৳ {ADMISSION_FEE}</strong>
+            </p>
+          </div>
+
+          <hr />
 
           <h3>Create New Class</h3>
 
@@ -364,9 +495,7 @@ function App() {
             onChange={(e) => setNewClassName(e.target.value)}
           />
 
-          <button onClick={handleCreateClass}>
-            Create Class
-          </button>
+          <button onClick={handleCreateClass}>Create Class</button>
 
           <hr />
 
@@ -401,21 +530,20 @@ function App() {
           <input
             type="number"
             min="1"
+            max="1000"
             value={totalSeats}
             onChange={(e) => setTotalSeats(e.target.value)}
           />
 
-          <button onClick={handleCreateShift}>
-            Create Shift
-          </button>
+          <button onClick={handleCreateShift}>Create Shift</button>
 
           {adminMessage && (
-            <p style={{ color: "green" }}>{adminMessage}</p>
+            <p className="success-message">{adminMessage}</p>
           )}
         </section>
 
         {/* Student Information */}
-        <section className="student-section">
+        <section className="student-section" id="student">
           <h2>Student Information</h2>
 
           <label>Birth Registration Number</label>
@@ -438,11 +566,10 @@ function App() {
           )}
 
           {showForm && !registered && (
-            <div>
+            <div className="registration-form">
               <h2>Student Registration</h2>
 
               <label>Student Full Name</label>
-
               <input
                 name="fullName"
                 value={student.fullName}
@@ -451,7 +578,6 @@ function App() {
               />
 
               <label>Date of Birth</label>
-
               <input
                 type="date"
                 name="dateOfBirth"
@@ -460,7 +586,6 @@ function App() {
               />
 
               <label>Guardian Name</label>
-
               <input
                 name="guardianName"
                 value={student.guardianName}
@@ -469,75 +594,89 @@ function App() {
               />
 
               <label>Guardian Phone</label>
-
               <input
+                type="tel"
                 name="guardianPhone"
                 value={student.guardianPhone}
                 onChange={handleChange}
                 placeholder="Phone Number"
               />
 
-              <button onClick={handleRegister}>
-                Register Student
-              </button>
+              <button onClick={handleRegister}>Register Student</button>
             </div>
           )}
 
           {registered && (
-            <div>
-              <p>Student Registration Successful!</p>
+            <div className="registered-info">
+              <h3>Student Details</h3>
+              <p><strong>Name:</strong> {student.fullName || "N/A"}</p>
+              <p><strong>Birth Registration Number:</strong> {studentId}</p>
+              <p><strong>Date of Birth:</strong> {student.dateOfBirth || "N/A"}</p>
+              <p><strong>Guardian:</strong> {student.guardianName || "N/A"}</p>
+              <p><strong>Guardian Phone:</strong> {student.guardianPhone || "N/A"}</p>
 
               <button
                 onClick={() => loadMyHolds(studentId)}
                 disabled={loadingApplications}
               >
-                {loadingApplications
-                  ? "Loading..."
-                  : "View My Applications"}
+                {loadingApplications ? "Loading..." : "View My Applications"}
               </button>
             </div>
           )}
 
           {error && (
-            <p style={{ color: "red" }}>{error}</p>
+            <p className="error-message" role="alert">{error}</p>
           )}
 
           {success && (
-            <p style={{ color: "green" }}>{success}</p>
+            <p className="success-message" role="status">{success}</p>
           )}
         </section>
 
         {/* Available Classes */}
-        <section className="classes-section">
+        <section className="classes-section" id="classes">
           <h2>Available Classes</h2>
 
+          <div className="student-fee-display">
+            <span>Admission Fee</span>
+            <strong>৳ {ADMISSION_FEE}</strong>
+          </div>
+
+          {classes.length === 0 && (
+            <p>No classes available at the moment.</p>
+          )}
+
           {classes.map((item) => (
-            <div key={item.id}>
+            <div className="class-card" key={item.id}>
               <h3>{item.name}</h3>
 
-              {(item.shifts || []).map((shift) => {
-                const alreadyApplied = holds.some((hold) => {
-                  const status = String(hold.status).toLowerCase();
+              {item.shifts.length === 0 && (
+                <p>No shifts available for this class.</p>
+              )}
 
-                  return (
-                    String(hold.classShiftId).toLowerCase() ===
-                      String(shift.id).toLowerCase() &&
-                    ["pending", "confirmed"].includes(status)
-                  );
-                });
+              {item.shifts.map((shift) => {
+                const statusExists = holds.some((hold) =>
+                  String(hold.classShiftId).toLowerCase() ===
+                    String(shift.id).toLowerCase() &&
+                  ["pending", "confirmed"].includes(hold.status) &&
+                  !(hold.status === "pending" &&
+                    getRemainingTime(hold.expiresAt) <= 0)
+                );
 
-                const availableSeats =
+                const availableSeats = Math.max(
+                  0,
                   shift.totalSeats -
                   shift.heldSeats -
-                  shift.confirmedSeats;
+                  shift.confirmedSeats
+                );
 
                 return (
-                  <div key={shift.id}>
-                    <p>
-                      {shift.shiftName} — Total Seats: {shift.totalSeats}
-                    </p>
+                  <div className="shift-card" key={shift.id}>
+                    <h4>{shift.shiftName}</h4>
 
-                    <p>
+                    <p>Total Seats: {shift.totalSeats}</p>
+
+                    <p className="available-seats">
                       Available Seats: {availableSeats}
                     </p>
 
@@ -545,13 +684,15 @@ function App() {
                       disabled={
                         !registered ||
                         loadingApplications ||
-                        alreadyApplied ||
+                        statusExists ||
                         availableSeats <= 0
                       }
                       onClick={() => handleApply(item.id, shift.id)}
                     >
-                      {alreadyApplied
+                      {statusExists
                         ? "Already Applied"
+                        : availableSeats <= 0
+                        ? "No Seats Available"
                         : "Apply for Admission"}
                     </button>
                   </div>
@@ -562,92 +703,141 @@ function App() {
         </section>
 
         {/* My Applications */}
-        <section className="applications-section">
+        <section className="applications-section" id="applications">
           <h2>My Applications</h2>
 
-          {loadingApplications && (
-            <p>Loading applications...</p>
-          )}
+          {loadingApplications && <p>Loading applications...</p>}
 
           {!loadingApplications && holds.length === 0 && (
             <p>No applications found.</p>
           )}
 
-          {!loadingApplications &&
-            holds.map((hold) => {
-              const status = String(hold.status).toLowerCase();
+          {!loadingApplications && holds.map((hold) => {
+            const remaining = getRemainingTime(hold.expiresAt);
 
-              const expired =
-                status === "pending" &&
-                new Date(hold.expiresAt).getTime() <= currentTime;
+            const expired =
+              hold.status === "expired" ||
+              (hold.status === "pending" && remaining <= 0);
 
-              const displayStatus = expired
-                ? "Expired"
-                : hold.status;
+            const displayStatus = expired
+              ? "Expired"
+              : hold.status.charAt(0).toUpperCase() + hold.status.slice(1);
 
-              const statusClass = expired
-                ? "expired"
-                : status;
+            const isPaid =
+              hold.paymentStatus.toLowerCase() === "paid";
 
-              return (
-                <div className="application-card" key={hold.id}>
-                  <h3>
-                    {hold.className} - {hold.shiftName}
-                  </h3>
+            const isPending =
+              hold.status === "pending" && !expired && !isPaid;
 
-                  <p>
-                    Status:{" "}
-                    <strong className={`status-${statusClass}`}>
-                      {displayStatus}
-                    </strong>
+            return (
+              <div className="application-card" key={hold.id}>
+                <h3>{hold.className} - {hold.shiftName}</h3>
+
+                <p>
+                  Admission Fee: <strong>৳ {ADMISSION_FEE}</strong>
+                </p>
+
+                <p>
+                  Admission Status:{" "}
+                  <strong className={`status-${expired ? "expired" : hold.status}`}>
+                    {displayStatus}
+                  </strong>
+                </p>
+
+                <p>
+                  Payment Status:{" "}
+                  <strong>{isPaid ? "Paid" : "Unpaid"}</strong>
+                </p>
+
+                <p>Applied: {formatDate(hold.createdAt)}</p>
+
+                {isPending && (
+                  <div className="hold-countdown">
+                    <h4>Time Remaining</h4>
+                    <h2>{formatCountdown(remaining)}</h2>
+                    <p>Please complete payment before the timer expires.</p>
+                  </div>
+                )}
+
+                {isPaid && (
+                  <>
+                    <p>Paid Amount: ৳ {hold.paymentAmount}</p>
+                    <p>Payment Date: {formatDate(hold.paidAt)}</p>
+                    <h3 className="payment-success">✓ ePayment Success</h3>
+                  </>
+                )}
+
+                {isPending && (
+                  <div className="payment-section">
+                    <h4>Admission Fee Payment</h4>
+
+                    <p>
+                      Required Amount: <strong>৳500</strong>
+                    </p>
+
+                    <label>Enter Payment Amount (BDT)</label>
+
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Enter amount"
+                      value={paymentAmounts[hold.id] ?? ""}
+                      onChange={(e) =>
+                        setPaymentAmounts((previous) => ({
+                          ...previous,
+                          [hold.id]: e.target.value
+                        }))
+                      }
+                    />
+
+                    <button
+                      disabled={payingHoldId === hold.id}
+                      onClick={() => handlePayment(hold.id)}
+                    >
+                      {payingHoldId === hold.id ? "Processing..." : "Submit Payment"}
+                    </button>
+
+                    <button
+                      onClick={() => handleCancel(hold)}
+                    >
+                      Cancel Hold
+                    </button>
+                  </div>
+                )}
+
+                {hold.status === "confirmed" && isPaid && (
+                  <p className="success-message">
+                    Admission confirmed successfully.
                   </p>
+                )}
 
-                  <p>
-                    Applied:{" "}
-                    {hold.createdAt
-                      ? new Date(hold.createdAt).toLocaleString()
-                      : "N/A"}
+                {hold.status === "confirmed" && !isPaid && (
+                  <p className="error-message">
+                    Admission is confirmed without payment. Please contact the administrator.
                   </p>
+                )}
 
-                  {status === "pending" && (
-                    <>
-                      <p>
-                        Expires:{" "}
-                        {new Date(hold.expiresAt).toLocaleString()}
-                      </p>
+                {hold.status === "cancelled" && (
+                  <p className="error-message">
+                    This application has been cancelled.
+                  </p>
+                )}
 
-                      <button
-                        disabled={expired}
-                        onClick={() => handleConfirm(hold.id)}
-                      >
-                        Confirm Admission
-                      </button>
-
-                      <button
-                        disabled={expired}
-                        onClick={() => handleCancel(hold.id)}
-                      >
-                        Cancel Hold
-                      </button>
-                    </>
-                  )}
-
-                  {status === "confirmed" && (
-                    <p>Admission successfully confirmed.</p>
-                  )}
-
-                  {status === "cancelled" && (
-                    <p>This application has been cancelled.</p>
-                  )}
-
-                  {(status === "expired" || expired) && (
-                    <p>This application has expired.</p>
-                  )}
-                </div>
-              );
-            })}
+                {expired && (
+                  <p className="error-message">
+                    This application has expired. Payment and cancellation are disabled. Please apply again.
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </section>
       </main>
+
+      <footer className="app-footer">
+        <p>School Admission System © 2026</p>
+        <p>Online School Admission Portal</p>
+      </footer>
     </div>
   );
 }

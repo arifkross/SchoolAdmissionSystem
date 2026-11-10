@@ -7,43 +7,58 @@ using Microsoft.EntityFrameworkCore;
 namespace backend.Controllers
 {
     [ApiController]
-    [Route("holds")]
     public class HoldsController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
+        private readonly IConfiguration _configuration;
 
-        public HoldsController(ApplicationDbContext context)
+        public HoldsController(
+            ApplicationDbContext context,
+            IConfiguration configuration)
         {
             _context = context;
+            _configuration = configuration;
         }
 
+        private const decimal AdmissionFee = 500m;
+
+        private int HoldDurationSeconds =>
+            int.TryParse(
+                _configuration["HOLD_DURATION_SECONDS"],
+                out int seconds) && seconds > 0
+                ? seconds
+                : 600;
+
         // POST /holds
-        [HttpPost]
+        [HttpPost("/holds")]
         public async Task<IActionResult> CreateHold(
             [FromBody] CreateHoldRequest request,
             [FromHeader(Name = "X-Student-Id")] string studentId)
         {
-            return await CreateHoldInternal(request, studentId, null);
+            return await CreateHoldInternal(
+                request.ClassShiftId,
+                null,
+                studentId);
         }
 
         // POST /classes/{classId}/holds
         [HttpPost("/classes/{classId:guid}/holds")]
         public async Task<IActionResult> CreateClassHold(
-            [FromRoute] Guid classId,
+            Guid classId,
             [FromBody] CreateHoldRequest request,
             [FromHeader(Name = "X-Student-Id")] string studentId)
         {
-            return await CreateHoldInternal(request, studentId, classId);
+            return await CreateHoldInternal(
+                request.ClassShiftId,
+                classId,
+                studentId);
         }
 
         private async Task<IActionResult> CreateHoldInternal(
-            CreateHoldRequest request,
-            string studentId,
-            Guid? classId)
+            Guid shiftId,
+            Guid? classId,
+            string studentId)
         {
-            if (request == null || request.ClassShiftId == Guid.Empty)
-                return BadRequest(new { message = "Valid class shift ID is required." });
-
             if (string.IsNullOrWhiteSpace(studentId))
                 return BadRequest(new { message = "Student ID is required." });
 
@@ -59,53 +74,49 @@ namespace backend.Controllers
                 await _context.Database.BeginTransactionAsync();
 
             var shift = await _context.ClassShifts
-                .FromSqlInterpolated($"""
-                    SELECT * FROM "ClassShifts"
-                    WHERE "Id" = {request.ClassShiftId}
-                    FOR UPDATE
-                    """)
+                .FromSqlInterpolated(
+                    $"SELECT * FROM \"ClassShifts\" WHERE \"Id\" = {shiftId} FOR UPDATE")
                 .FirstOrDefaultAsync();
 
-            if (shift == null)
+            if (shift == null ||
+                (classId.HasValue && shift.SchoolClassId != classId.Value))
+            {
                 return NotFound(new { message = "Class shift not found." });
-
-            if (classId.HasValue && shift.SchoolClassId != classId.Value)
-                return NotFound(new { message = "Class shift not found in this class." });
+            }
 
             var now = DateTime.UtcNow;
 
-            // Expire old pending holds for this shift
             var expiredHolds = await _context.AdmissionHolds
-                .Where(h => h.ClassShiftId == shift.Id
-                    && h.Status == HoldStatus.Pending
-                    && h.ExpiresAt <= now)
+                .Where(h =>
+                    h.ClassShiftId == shiftId &&
+                    h.Status == HoldStatus.Pending &&
+                    h.ExpiresAt <= now)
                 .ToListAsync();
 
             foreach (var expired in expiredHolds)
+            {
                 expired.Status = HoldStatus.Expired;
+                shift.HeldSeats = Math.Max(0, shift.HeldSeats - 1);
+            }
 
-            shift.HeldSeats = Math.Max(
-                0, shift.HeldSeats - expiredHolds.Count);
+            var existingHold = await _context.AdmissionHolds
+                .FirstOrDefaultAsync(h =>
+                    h.StudentId == student.Id &&
+                    h.ClassShiftId == shiftId &&
+                    (h.Status == HoldStatus.Pending ||
+                     h.Status == HoldStatus.Confirmed));
 
-            // Check duplicate application
-            bool alreadyApplied = await _context.AdmissionHolds.AnyAsync(
-                h => h.StudentId == student.Id
-                && h.ClassShiftId == shift.Id
-                && (h.Status == HoldStatus.Pending
-                    || h.Status == HoldStatus.Confirmed));
-
-            if (alreadyApplied)
+            if (existingHold != null)
             {
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
 
                 return Conflict(new
                 {
-                    message = "You already have an active application."
+                    message = "You already have an active application for this class and shift."
                 });
             }
 
-            // Check seat availability
             if (shift.HeldSeats + shift.ConfirmedSeats >= shift.TotalSeats)
             {
                 await _context.SaveChangesAsync();
@@ -114,23 +125,18 @@ namespace backend.Controllers
                 return Conflict(new { message = "No seats available." });
             }
 
-            int duration = int.TryParse(
-                Environment.GetEnvironmentVariable("HOLD_DURATION_SECONDS"),
-                out int seconds) ? seconds : 600;
-
-            if (duration <= 0)
-                duration = 600;
-
             var hold = new AdmissionHold
             {
+                Id = Guid.NewGuid(),
                 StudentId = student.Id,
-                ClassShiftId = shift.Id,
+                ClassShiftId = shiftId,
                 CreatedAt = now,
-                ExpiresAt = now.AddSeconds(duration),
+                ExpiresAt = now.AddSeconds(HoldDurationSeconds),
                 Status = HoldStatus.Pending
             };
 
             shift.HeldSeats++;
+
             _context.AdmissionHolds.Add(hold);
 
             await _context.SaveChangesAsync();
@@ -138,16 +144,15 @@ namespace backend.Controllers
 
             return Ok(new
             {
-                hold.Id,
-                hold.Status,
-                hold.CreatedAt,
-                hold.ExpiresAt,
-                message = "Seat temporarily reserved."
+                message = "Seat held successfully.",
+                holdId = hold.Id,
+                expiresAt = hold.ExpiresAt,
+                status = hold.Status.ToString()
             });
         }
 
         // GET /holds/{holdId}
-        [HttpGet("{holdId:guid}")]
+        [HttpGet("/holds/{holdId:guid}")]
         public async Task<IActionResult> GetHold(
             Guid holdId,
             [FromHeader(Name = "X-Student-Id")] string studentId)
@@ -155,67 +160,39 @@ namespace backend.Controllers
             if (string.IsNullOrWhiteSpace(studentId))
                 return BadRequest(new { message = "Student ID is required." });
 
-            studentId = studentId.Trim();
+            var student = await _context.Students.FirstOrDefaultAsync(
+                s => s.BirthRegistrationNumber == studentId.Trim());
+
+            if (student == null)
+                return NotFound(new { message = "Student not found." });
 
             var hold = await _context.AdmissionHolds
-                .Include(h => h.Student)
                 .Include(h => h.ClassShift)
-                .ThenInclude(s => s!.SchoolClass)
-                .FirstOrDefaultAsync(h => h.Id == holdId);
+                    .ThenInclude(s => s.SchoolClass)
+                .FirstOrDefaultAsync(h =>
+                    h.Id == holdId && h.StudentId == student.Id);
 
-            if (hold == null ||
-                hold.Student == null ||
-                hold.Student.BirthRegistrationNumber != studentId)
-                return NotFound(new { message = "Hold not found." });
+            if (hold == null)
+                return NotFound(new { message = "Application not found." });
 
-            if (hold.Status == HoldStatus.Pending &&
-                hold.ExpiresAt <= DateTime.UtcNow)
-            {
-                await using var transaction =
-                    await _context.Database.BeginTransactionAsync();
-
-                var shift = await _context.ClassShifts
-                    .FromSqlInterpolated($"""
-                        SELECT * FROM "ClassShifts"
-                        WHERE "Id" = {hold.ClassShiftId}
-                        FOR UPDATE
-                        """)
-                    .FirstOrDefaultAsync();
-
-                if (shift != null)
-                {
-                    var currentHold = await _context.AdmissionHolds
-                        .FirstOrDefaultAsync(h => h.Id == holdId);
-
-                    if (currentHold != null &&
-                        currentHold.Status == HoldStatus.Pending &&
-                        currentHold.ExpiresAt <= DateTime.UtcNow)
-                    {
-                        currentHold.Status = HoldStatus.Expired;
-                        shift.HeldSeats = Math.Max(0, shift.HeldSeats - 1);
-
-                        await _context.SaveChangesAsync();
-                    }
-                }
-
-                await transaction.CommitAsync();
-            }
-
-            var updatedHold = await _context.AdmissionHolds
-                .FirstAsync(h => h.Id == holdId);
+            await ExpireHoldIfNeeded(hold);
 
             return Ok(new
             {
-                holdId = hold.Id,
-                className = hold.ClassShift?.SchoolClass?.Name ?? "Unknown Class",
-                shiftName = hold.ClassShift?.ShiftName ?? "Unknown Shift",
-                status = updatedHold.Status.ToString().ToUpper(),
-                expiresAt = hold.ExpiresAt
+                hold.Id,
+                hold.Status,
+                hold.CreatedAt,
+                hold.ExpiresAt,
+                hold.PaymentStatus,
+                hold.PaymentAmount,
+                hold.PaidAt,
+                ClassName = hold.ClassShift.SchoolClass.Name,
+                ShiftName = hold.ClassShift.ShiftName
             });
         }
 
         // POST /holds/{holdId}/confirm
-        [HttpPost("{holdId:guid}/confirm")]
+        [HttpPost("/holds/{holdId:guid}/confirm")]
         public async Task<IActionResult> ConfirmHold(
             Guid holdId,
             [FromHeader(Name = "X-Student-Id")] string studentId)
@@ -223,49 +200,78 @@ namespace backend.Controllers
             if (string.IsNullOrWhiteSpace(studentId))
                 return BadRequest(new { message = "Student ID is required." });
 
-            studentId = studentId.Trim();
-
             var student = await _context.Students.FirstOrDefaultAsync(
-                s => s.BirthRegistrationNumber == studentId);
+                s => s.BirthRegistrationNumber == studentId.Trim());
 
             if (student == null)
                 return NotFound(new { message = "Student not found." });
 
-            var holdInfo = await _context.AdmissionHolds
-                .Where(h => h.Id == holdId)
-                .Select(h => new { h.ClassShiftId, h.StudentId })
-                .FirstOrDefaultAsync();
+            var hold = await _context.AdmissionHolds.FirstOrDefaultAsync(
+                h => h.Id == holdId && h.StudentId == student.Id);
 
-            if (holdInfo == null || holdInfo.StudentId != student.Id)
-                return NotFound(new { message = "Hold not found." });
+            if (hold == null)
+                return NotFound(new { message = "Application not found." });
+
+            if (hold.Status == HoldStatus.Confirmed &&
+                hold.PaymentStatus == "Paid")
+            {
+                return Ok(new { message = "Admission already confirmed." });
+            }
+
+            return Conflict(new
+            {
+                message = "Please complete the admission fee payment to confirm your admission."
+            });
+        }
+
+        // POST /holds/{holdId}/pay
+        [HttpPost("/holds/{holdId:guid}/pay")]
+        public async Task<IActionResult> PayAdmissionFee(
+            Guid holdId,
+            [FromBody] PaymentRequest request,
+            [FromHeader(Name = "X-Student-Id")] string studentId)
+        {
+            if (string.IsNullOrWhiteSpace(studentId))
+                return BadRequest(new { message = "Student ID is required." });
+
+            if (request == null || request.Amount != AdmissionFee)
+                return BadRequest(new
+                {
+                    message = $"Admission fee must be exactly {AdmissionFee}."
+                });
+
+            var student = await _context.Students.FirstOrDefaultAsync(
+                s => s.BirthRegistrationNumber == studentId.Trim());
+
+            if (student == null)
+                return NotFound(new { message = "Student not found." });
 
             await using var transaction =
                 await _context.Database.BeginTransactionAsync();
 
-            var shift = await _context.ClassShifts
-                .FromSqlInterpolated($"""
-                    SELECT * FROM "ClassShifts"
-                    WHERE "Id" = {holdInfo.ClassShiftId}
-                    FOR UPDATE
-                    """)
-                .FirstOrDefaultAsync();
+            var hold = await _context.AdmissionHolds.FirstOrDefaultAsync(
+                h => h.Id == holdId && h.StudentId == student.Id);
 
-            var hold = await _context.AdmissionHolds
-                .FirstOrDefaultAsync(h => h.Id == holdId);
+            if (hold == null)
+                return NotFound(new { message = "Application not found." });
 
-            if (shift == null || hold == null ||
-                hold.StudentId != student.Id)
-                return NotFound(new { message = "Hold not found." });
-
-            // Idempotent confirmation
-            if (hold.Status == HoldStatus.Confirmed)
+            if (hold.Status == HoldStatus.Confirmed &&
+                hold.PaymentStatus == "Paid")
             {
                 await transaction.CommitAsync();
-                return Ok(new { message = "Admission already confirmed." });
+                return Ok(new { message = "Payment already completed." });
             }
 
+            var shift = await _context.ClassShifts
+                .FromSqlInterpolated(
+                    $"SELECT * FROM \"ClassShifts\" WHERE \"Id\" = {hold.ClassShiftId} FOR UPDATE")
+                .FirstOrDefaultAsync();
+
+            if (shift == null)
+                return NotFound(new { message = "Class shift not found." });
+
             if (hold.Status != HoldStatus.Pending)
-                return Conflict(new { message = "This hold is no longer active." });
+                return Conflict(new { message = "This application is no longer pending." });
 
             if (hold.ExpiresAt <= DateTime.UtcNow)
             {
@@ -282,16 +288,25 @@ namespace backend.Controllers
             shift.ConfirmedSeats++;
 
             hold.Status = HoldStatus.Confirmed;
+            hold.PaymentStatus = "Paid";
+            hold.PaymentAmount = AdmissionFee;
+            hold.PaidAt = DateTime.UtcNow;
             hold.ConfirmedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
 
-            return Ok(new { message = "Admission confirmed successfully." });
+            return Ok(new
+            {
+                message = "ePayment Success",
+                paymentStatus = hold.PaymentStatus,
+                amount = hold.PaymentAmount,
+                paidAt = hold.PaidAt
+            });
         }
 
         // DELETE /holds/{holdId}
-        [HttpDelete("{holdId:guid}")]
+        [HttpDelete("/holds/{holdId:guid}")]
         public async Task<IActionResult> CancelHold(
             Guid holdId,
             [FromHeader(Name = "X-Student-Id")] string studentId)
@@ -299,42 +314,31 @@ namespace backend.Controllers
             if (string.IsNullOrWhiteSpace(studentId))
                 return BadRequest(new { message = "Student ID is required." });
 
-            studentId = studentId.Trim();
-
             var student = await _context.Students.FirstOrDefaultAsync(
-                s => s.BirthRegistrationNumber == studentId);
+                s => s.BirthRegistrationNumber == studentId.Trim());
 
             if (student == null)
                 return NotFound(new { message = "Student not found." });
 
-            var holdInfo = await _context.AdmissionHolds
-                .Where(h => h.Id == holdId)
-                .Select(h => new { h.ClassShiftId, h.StudentId })
-                .FirstOrDefaultAsync();
-
-            if (holdInfo == null || holdInfo.StudentId != student.Id)
-                return NotFound(new { message = "Hold not found." });
-
             await using var transaction =
                 await _context.Database.BeginTransactionAsync();
 
-            var shift = await _context.ClassShifts
-                .FromSqlInterpolated($"""
-                    SELECT * FROM "ClassShifts"
-                    WHERE "Id" = {holdInfo.ClassShiftId}
-                    FOR UPDATE
-                    """)
-                .FirstOrDefaultAsync();
+            var hold = await _context.AdmissionHolds.FirstOrDefaultAsync(
+                h => h.Id == holdId && h.StudentId == student.Id);
 
-            var hold = await _context.AdmissionHolds
-                .FirstOrDefaultAsync(h => h.Id == holdId);
-
-            if (shift == null || hold == null ||
-                hold.StudentId != student.Id)
-                return NotFound(new { message = "Hold not found." });
+            if (hold == null)
+                return NotFound(new { message = "Application not found." });
 
             if (hold.Status != HoldStatus.Pending)
-                return Conflict(new { message = "This hold cannot be cancelled." });
+                return Conflict(new { message = "Only pending applications can be cancelled." });
+
+            var shift = await _context.ClassShifts
+                .FromSqlInterpolated(
+                    $"SELECT * FROM \"ClassShifts\" WHERE \"Id\" = {hold.ClassShiftId} FOR UPDATE")
+                .FirstOrDefaultAsync();
+
+            if (shift == null)
+                return NotFound(new { message = "Class shift not found." });
 
             hold.Status = HoldStatus.Cancelled;
             shift.HeldSeats = Math.Max(0, shift.HeldSeats - 1);
@@ -342,7 +346,7 @@ namespace backend.Controllers
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
 
-            return Ok(new { message = "Hold cancelled successfully." });
+            return Ok(new { message = "Application cancelled successfully." });
         }
 
         // GET /me/holds
@@ -353,89 +357,71 @@ namespace backend.Controllers
             if (string.IsNullOrWhiteSpace(studentId))
                 return BadRequest(new { message = "Student ID is required." });
 
-            studentId = studentId.Trim();
-
             var student = await _context.Students.FirstOrDefaultAsync(
-                s => s.BirthRegistrationNumber == studentId);
+                s => s.BirthRegistrationNumber == studentId.Trim());
 
             if (student == null)
                 return NotFound(new { message = "Student not found." });
 
-            var now = DateTime.UtcNow;
-
-            // Find expired pending holds
-            var expiredShiftIds = await _context.AdmissionHolds
-                .Where(h => h.StudentId == student.Id
-                    && h.Status == HoldStatus.Pending
-                    && h.ExpiresAt <= now)
-                .Select(h => h.ClassShiftId)
-                .Distinct()
-                .OrderBy(id => id)
+            var holds = await _context.AdmissionHolds
+                .Include(h => h.ClassShift)
+                    .ThenInclude(s => s.SchoolClass)
+                .Where(h => h.StudentId == student.Id)
+                .OrderByDescending(h => h.CreatedAt)
                 .ToListAsync();
 
-            // Release expired seats
-            foreach (var shiftId in expiredShiftIds)
+            foreach (var hold in holds)
             {
-                await using var transaction =
-                    await _context.Database.BeginTransactionAsync();
-
-                var shift = await _context.ClassShifts
-                    .FromSqlInterpolated($"""
-                        SELECT * FROM "ClassShifts"
-                        WHERE "Id" = {shiftId}
-                        FOR UPDATE
-                        """)
-                    .FirstOrDefaultAsync();
-
-                if (shift != null)
-                {
-                    var expiredHolds = await _context.AdmissionHolds
-                        .Where(h => h.ClassShiftId == shiftId
-                            && h.Status == HoldStatus.Pending
-                            && h.ExpiresAt <= DateTime.UtcNow)
-                        .ToListAsync();
-
-                    foreach (var expired in expiredHolds)
-                        expired.Status = HoldStatus.Expired;
-
-                    shift.HeldSeats = Math.Max(
-                        0,
-                        shift.HeldSeats - expiredHolds.Count
-                    );
-
-                    await _context.SaveChangesAsync();
-                }
-
-                await transaction.CommitAsync();
+                await ExpireHoldIfNeeded(hold);
             }
 
-            // Load all applications of this student
-            var holds = await _context.AdmissionHolds
-                .Where(h => h.StudentId == student.Id)
-                .Include(h => h.ClassShift)
-                .ThenInclude(s => s!.SchoolClass)
-                .ToListAsync();
-
-            // Return a simple response for React
-            var result = holds.Select(h => new
+            return Ok(holds.Select(h => new
             {
-                Id = h.Id,
-                StudentId = h.StudentId,
-                ClassShiftId = h.ClassShiftId,
-                Status = h.Status.ToString(),
-                CreatedAt = h.CreatedAt,
-                ExpiresAt = h.ExpiresAt,
-                ConfirmedAt = h.ConfirmedAt,
-                ClassName = h.ClassShift?.SchoolClass?.Name ?? "Unknown Class",
-                ShiftName = h.ClassShift?.ShiftName ?? "Unknown Shift"
-            }).ToList();
+                h.Id,
+                h.Status,
+                h.CreatedAt,
+                h.ExpiresAt,
+                h.PaymentStatus,
+                h.PaymentAmount,
+                h.PaidAt,
+                ClassName = h.ClassShift.SchoolClass.Name,
+                ShiftName = h.ClassShift.ShiftName
+            }));
+        }
 
-            return Ok(result);
+        private async Task ExpireHoldIfNeeded(AdmissionHold hold)
+        {
+            if (hold.Status != HoldStatus.Pending ||
+                hold.ExpiresAt > DateTime.UtcNow)
+                return;
+
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync();
+
+            var shift = await _context.ClassShifts
+                .FromSqlInterpolated(
+                    $"SELECT * FROM \"ClassShifts\" WHERE \"Id\" = {hold.ClassShiftId} FOR UPDATE")
+                .FirstOrDefaultAsync();
+
+            if (shift != null && hold.Status == HoldStatus.Pending)
+            {
+                hold.Status = HoldStatus.Expired;
+                shift.HeldSeats = Math.Max(0, shift.HeldSeats - 1);
+
+                await _context.SaveChangesAsync();
+            }
+
+            await transaction.CommitAsync();
         }
     }
 
     public class CreateHoldRequest
     {
         public Guid ClassShiftId { get; set; }
+    }
+
+    public class PaymentRequest
+    {
+        public decimal Amount { get; set; }
     }
 }

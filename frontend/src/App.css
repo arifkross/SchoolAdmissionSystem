@@ -1,3 +1,23 @@
+
+/* ================================
+   SCHOOL ADMISSION SYSTEM
+   Professional Success Green Theme
+================================ */
+
+:root {
+  --primary: #15803d;
+  --primary-dark: #14532d;
+  --primary-light: #dcfce7;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --background: #f0fdf4;
+  --white: #ffffff;
+  --text: #1f2937;
+  --muted: #64748b;
+  --border: #e2e8f0;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -5,111 +25,489 @@
 }
 
 body {
-  font-family: Arial, sans-serif;
-  background: #f4f6f9;
-  color: #333;
+  font-family: "Segoe UI", Arial, sans-serif;
+  background: var(--background);
+  color: var(--text);
+  line-height: 1.6;
 }
 
 .app {
   min-height: 100vh;
 }
 
+/* HEADER */
+
 header {
-  background: #173b70;
+  background: linear-gradient(135deg, #14532d, #15803d);
   color: white;
-  padding: 30px;
+  padding: 30px 20px;
   text-align: center;
+  box-shadow: 0 4px 15px rgba(20, 83, 45, 0.18);
 }
 
 header h1 {
-  margin-bottom: 10px;
+  font-size: 30px;
+  font-weight: 700;
+  margin-bottom: 5px;
 }
+
+header p {
+  color: #dcfce7;
+  font-size: 15px;
+}
+
+/* NAVIGATION */
+
+.main-nav {
+  background: #166534;
+  padding: 12px 20px;
+  display: flex;
+  justify-content: center;
+  gap: 30px;
+  flex-wrap: wrap;
+}
+
+.main-nav a {
+  color: white;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  transition: 0.2s;
+}
+
+.main-nav a:hover {
+  color: #bbf7d0;
+}
+
+/* MAIN CONTENT */
 
 main {
-  max-width: 900px;
-  margin: 40px auto;
-  padding: 20px;
+  max-width: 1100px;
+  width: 92%;
+  margin: 35px auto;
+  padding: 10px 0 40px;
 }
 
+/* COMMON SECTION CARDS */
+
+.admin-section,
 .student-section,
-.classes-section {
-  background: white;
-  padding: 25px;
+.classes-section,
+.applications-section {
+  background: var(--white);
+  padding: 28px;
   margin-bottom: 25px;
-  border-radius: 10px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.04);
 }
 
 h2 {
-  margin-bottom: 20px;
-  color: #173b70;
+  color: var(--primary-dark);
+  font-size: 23px;
+  margin-bottom: 22px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--primary-light);
 }
+
+h3 {
+  color: #334155;
+  font-size: 18px;
+  margin: 15px 0 12px;
+}
+
+/* ADMIN PANEL */
+
+.admin-section {
+  border-top: 4px solid var(--primary);
+}
+
+.admin-section h3 {
+  color: var(--primary-dark);
+  font-size: 17px;
+}
+
+.admin-section hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 25px 0;
+}
+
+/* FORM LABELS */
 
 label {
   display: block;
-  margin-bottom: 8px;
+  margin: 14px 0 7px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
 }
 
-input {
+/* INPUTS AND SELECT */
+
+input,
+select {
   width: 100%;
-  padding: 12px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
+  padding: 13px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
   margin-bottom: 15px;
   font-size: 15px;
+  color: var(--text);
+  background: #ffffff;
+  outline: none;
+  transition: 0.2s;
 }
+
+input:focus,
+select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.12);
+}
+
+input:disabled {
+  background: #f1f5f9;
+  cursor: not-allowed;
+}
+
+input::placeholder {
+  color: #94a3b8;
+}
+
+/* BUTTONS */
 
 button {
-  background: #173b70;
+  background: var(--primary);
   color: white;
   border: none;
-  padding: 12px 25px;
-  border-radius: 6px;
+  padding: 12px 22px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  margin: 5px 5px 5px 0;
 }
 
-button:hover {
-  background: #24569b;
+button:hover:not(:disabled) {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(21, 128, 61, 0.18);
+}
+
+button:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+  opacity: 0.65;
+  transform: none;
+  box-shadow: none;
+}
+
+/* STUDENT SECTION */
+
+.student-section {
+  border-top: 4px solid #22c55e;
+}
+
+.student-section > div {
+  margin-top: 20px;
+}
+
+.student-section p {
+  margin: 12px 0;
+}
+
+/* REGISTRATION FORM */
+
+.student-section > div > div {
+  background: #f0fdf4;
+  padding: 22px;
+  margin-top: 20px;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+}
+
+.student-section > div > div h2 {
+  font-size: 19px;
+}
+
+/* AVAILABLE CLASSES */
+
+.classes-section {
+  border-top: 4px solid #16a34a;
+}
+
+.classes-section > div {
+  background: #f8fafc;
+  padding: 20px;
+  margin: 16px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: 0.2s;
+}
+
+.classes-section > div:hover {
+  border-color: #86efac;
+  box-shadow: 0 4px 12px rgba(21, 128, 61, 0.07);
+}
+
+.classes-section > div > h3 {
+  color: var(--primary-dark);
+  font-size: 20px;
+  margin-top: 0;
+}
+
+.classes-section > div > div {
+  background: white;
+  border: 1px solid #dcfce7;
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 12px;
+}
+
+.classes-section p {
+  margin: 7px 0;
+  font-size: 14px;
+}
+
+.classes-section > div > div p:nth-child(2) {
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* MY APPLICATIONS */
+
+.applications-section {
+  border-top: 4px solid #15803d;
 }
 
 .application-card {
-  background: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 10px;
-  padding: 20px;
-  margin: 15px 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--primary);
+  border-radius: 12px;
+  padding: 22px;
+  margin: 18px 0;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.04);
 }
 
 .application-card h3 {
+  color: var(--primary-dark);
+  font-size: 19px;
   margin-top: 0;
-  color: #222;
 }
 
 .application-card p {
   margin: 10px 0;
+  font-size: 14px;
 }
 
-.application-card button {
-  margin-right: 10px;
-  margin-top: 10px;
-}
+/* STATUS COLORS */
 
 .status-confirmed {
-  color: #16803c;
+  color: #15803d;
+  background: #dcfce7;
+  padding: 4px 10px;
+  border-radius: 20px;
 }
 
 .status-pending {
-  color: #d97706;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 4px 10px;
+  border-radius: 20px;
 }
 
 .status-cancelled,
 .status-expired {
   color: #dc2626;
+  background: #fee2e2;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+/* APPLICATION BUTTONS */
+
+.application-card button {
+  margin-top: 12px;
 }
 
 .application-card button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* RESPONSIVE DESIGN */
+
+@media (max-width: 768px) {
+  header {
+    padding: 24px 15px;
+  }
+
+  header h1 {
+    font-size: 23px;
+  }
+
+  main {
+    width: 94%;
+    margin: 20px auto;
+  }
+
+  .admin-section,
+  .student-section,
+  .classes-section,
+  .applications-section {
+    padding: 19px;
+    margin-bottom: 18px;
+  }
+
+  h2 {
+    font-size: 20px;
+  }
+
+  .main-nav {
+    gap: 15px;
+    padding: 12px 10px;
+  }
+
+  .main-nav a {
+    font-size: 13px;
+  }
+
+  button {
+    padding: 11px 16px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  header h1 {
+    font-size: 20px;
+  }
+
+  header p {
+    font-size: 13px;
+  }
+
+  .main-nav {
+    gap: 12px;
+  }
+
+  .admin-section,
+  .student-section,
+  .classes-section,
+  .applications-section {
+    padding: 15px;
+  }
+
+  .application-card {
+    padding: 16px;
+  }
+
+  .classes-section > div {
+    padding: 14px;
+  }
+
+  .application-card button {
+    width: 100%;
+    margin: 6px 0;
+  }
+}
+
+/* Additional UI improvements */
+
+html {
+  scroll-behavior: smooth;
+}
+
+.registration-form {
+  background: #f0fdf4;
+  padding: 22px;
+  margin-top: 20px;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+}
+
+.registered-info {
+  margin-top: 15px;
+}
+
+.class-card {
+  scroll-margin-top: 20px;
+}
+
+.shift-card h4 {
+  color: #166534;
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.available-seats {
+  display: inline-block;
+  background: #dcfce7;
+  color: #15803d !important;
+  padding: 7px 12px;
+  border-radius: 7px;
+  font-weight: 700;
+}
+
+.error-message {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  padding: 11px 14px;
+  border-radius: 8px;
+  margin-top: 15px;
+}
+
+.success-message {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  padding: 11px 14px;
+  border-radius: 8px;
+  margin-top: 15px;
+}
+
+.app-footer {
+  background: #14532d;
+  color: #dcfce7;
+  padding: 22px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.app-footer p {
+  margin: 4px 0;
+}
+
+.fee-admin-card {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  padding: 20px;
+  border-radius: 10px;
+  margin: 20px 0;
+}
+
+.fee-admin-card strong {
+  color: #15803d;
+  font-size: 20px;
+}
+
+.student-fee-display {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #dcfce7;
+  color: #14532d;
+  padding: 16px 20px;
+  border-radius: 10px;
+  margin: 15px 0 20px;
+}
+
+.student-fee-display strong {
+  font-size: 22px;
+}
+
+

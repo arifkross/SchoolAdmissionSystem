@@ -10,6 +10,7 @@ namespace backend.Data
             : base(options)
         {
         }
+        public DbSet<AdmissionSettings> AdmissionSettings { get; set; }
 
         public DbSet<Student> Students => Set<Student>();
         public DbSet<SchoolClass> SchoolClasses => Set<SchoolClass>();

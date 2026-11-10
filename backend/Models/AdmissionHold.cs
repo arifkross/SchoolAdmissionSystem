@@ -28,5 +28,10 @@ namespace backend.Models
         public DateTime? ConfirmedAt { get; set; }
 
         public HoldStatus Status { get; set; } = HoldStatus.Pending;
+        public string PaymentStatus { get; set; } = "Unpaid";
+
+        public decimal PaymentAmount { get; set; }
+
+        public DateTime? PaidAt { get; set; }
     }
 }

@@ -40,6 +40,16 @@ namespace backend.Migrations
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("PaidAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("PaymentAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("PaymentStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
@@ -55,6 +65,22 @@ namespace backend.Migrations
                         .HasFilter("\"Status\" IN (0, 1)");
 
                     b.ToTable("AdmissionHolds");
+                });
+
+            modelBuilder.Entity("backend.Models.AdmissionSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("AdmissionFee")
+                        .HasColumnType("numeric");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdmissionSettings");
                 });
 
             modelBuilder.Entity("backend.Models.ClassShift", b =>
